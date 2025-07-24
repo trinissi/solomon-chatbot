@@ -3,7 +3,7 @@ import os
 import openai
 import requests
 
-app = Flask(__name__)  # ← энэ мөр маш чухал
+app = Flask(__name__)  
 
 @app.route("/", methods=["GET"])
 def home():
