@@ -1,9 +1,16 @@
 from flask import Flask, request
 import os
-import openai
 import requests
+from openai import OpenAI
+from dotenv import load_dotenv
 
-app = Flask(__name__)  
+load_dotenv()
+
+app = Flask(__name__)
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+FB_VERIFY_TOKEN = os.getenv("FB_VERIFY_TOKEN")
+FB_PAGE_ACCESS_TOKEN = os.getenv("FB_PAGE_ACCESS_TOKEN")
 
 @app.route("/", methods=["GET"])
 def home():
@@ -12,55 +19,56 @@ def home():
 @app.route("/webhook", methods=["GET", "POST"])
 def webhook():
     if request.method == "GET":
-        verify_token = os.environ.get("FB_VERIFY_TOKEN")
         token = request.args.get("hub.verify_token")
         challenge = request.args.get("hub.challenge")
-        if token == verify_token:
+        if token == FB_VERIFY_TOKEN:
             return challenge, 200
-        return "Invalid verification token", 403
+        else:
+            return "Invalid token", 403
 
     elif request.method == "POST":
         data = request.get_json()
         print("📨 Incoming:", data)
 
-        try:
-            messaging = data['entry'][0]['messaging'][0]
-            sender_id = messaging['sender']['id']
+        if data["object"] == "page":
+            for entry in data["entry"]:
+                messaging = entry.get("messaging", [])
+                for message_event in messaging:
+                    sender_id = message_event["sender"]["id"]
 
-            if 'postback' in messaging:
-                message_text = messaging['postback']['title']
-            elif 'message' in messaging:
-                message_text = messaging['message']['text']
-            else:
-                return "No valid message", 200
+                    if "message" in message_event and "text" in message_event["message"]:
+                        user_message = message_event["message"]["text"]
+                        reply = get_chat_response(user_message)
+                        send_message(sender_id, reply)
 
-        except Exception as e:
-            print("⛔ Parse error:", e)
-            return "Parse failed", 200
-
-        openai.api_key = os.getenv("OPENAI_API_KEY")
-        try:
-            response = openai.ChatCompletion.create(
-                model="gpt-3.5-turbo",
-                messages=[{"role": "user", "content": message_text}]
-            )
-            reply_text = response.choices[0].message.content.strip()
-        except Exception as e:
-            print("⛔ GPT error:", e)
-            reply_text = "Уучлаарай, алдаа гарлаа."
-
-        fb_token = os.getenv("FB_PAGE_TOKEN")
-        fb_url = f"https://graph.facebook.com/v19.0/me/messages?access_token={fb_token}"
-        payload = {
-            "recipient": {"id": sender_id},
-            "message": {"text": reply_text}
-        }
-        headers = {"Content-Type": "application/json"}
-        fb_response = requests.post(fb_url, json=payload, headers=headers)
-        print("✅ FB Send Response:", fb_response.text)
+                    elif "postback" in message_event:
+                        payload = message_event["postback"].get("payload")
+                        if payload == "GET_STARTED" or payload == "WELCOME_MESSAGE":
+                            send_message(sender_id, "Сайн байна уу? Та тавилгын талаар асууж болно 😊")
 
         return "OK", 200
 
-if __name__ == "__main__":
-    app.run()
+def get_chat_response(user_message):
+    try:
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "Та тавилгын компаний ухаалаг туслах чатбот."},
+                {"role": "user", "content": user_message}
+            ]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print("⛔ GPT error:", e)
+        return "Уучлаарай, сервер дээр асуудал гарлаа."
 
+def send_message(recipient_id, message_text):
+    url = f"https://graph.facebook.com/v17.0/me/messages?access_token={FB_PAGE_ACCESS_TOKEN}"
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "recipient": {"id": recipient_id},
+        "message": {"text": message_text}
+    }
+
+    response = requests.post(url, headers=headers, json=payload)
+    if response.s
