@@ -1,4 +1,4 @@
 flask
-gunicorn
+python-dotenv
 requests
-openai
+openai>=1.0.0
